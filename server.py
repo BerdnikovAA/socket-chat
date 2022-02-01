@@ -1,48 +1,47 @@
-from threading import Thread
-from Socket import Socket
+import socket
+import asyncio
 
-class Server(Socket):
-    users = []
+class Server(socket.socket):
 
     def __init__(self):
         super().__init__()
-        self._server_address = ('localhost', 12345)
+        self.users = []
+        self.loop = asyncio.new_event_loop()
+        self.server_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
 
-    def _set_up(self):
-        self.bind(self._server_address)
-        self.listen()
+    def set_up_server(self):
+        self.server_socket.bind(('localhost', 50001))
+        self.server_socket.setblocking(False)
+        self.server_socket.listen()
 
-    def _accept_clients(self):
+    async def _accept_clients(self):
         while True:
-            user_conn, user_address = self.accept()
+            user_conn, user_address = await self.loop.sock_accept(self.server_socket)
             print('New user connected!')
             self.users.append(user_conn)
-            get_mes_thread = Thread(target=self._get_message, args=(user_conn, user_address,))
-            get_mes_thread.start()
 
+            self.loop.create_task(self._get_message(user_conn, user_address))
 
-    def _get_message(self, user_conn, user_address):
+    async def _get_message(self, user_conn, user_address):
         while True:
-            check_data = True
-            bufsiz = 10
-            byte_string = b''
-            while check_data:
-                data = user_conn.recv(bufsiz)
-                byte_string += data
-                if len(data) < bufsiz:
-                    check_data = False
-            message = 'User: {}: {}'.format(user_address, byte_string.decode('utf-8'))
-            self._send_message(message)
+            bufsiz = 2048
+            data = await self.loop.sock_recv(user_conn, bufsiz)
+            message = 'User-[{}]: {}'.format(user_address, data.decode('utf-8'))
+            await self._send_message(message)
+            #self.loop.create_task(self._send_message(message))
 
-    def _send_message(self, message):
+    async def _send_message(self, message):
         for user in self.users:
-            user.send(message.encode('utf-8'))
+            await self.loop.sock_sendall(user, message.encode('utf-8'))
+
+    async def _async_run(self):
+        print('Server is running!')
+        await self.loop.create_task(self._accept_clients())
 
     def start_server(self):
-        print('Server is running!')
-        self._set_up()
-        self._accept_clients()
+        self.loop.run_until_complete(self._async_run())
 
 if __name__ == '__main__':
     server = Server()
+    server.set_up_server()
     server.start_server()
